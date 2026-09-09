@@ -1,0 +1,6 @@
+file_index_cache.json
+*.xlsx
+out*.txt
+err*.txt
+__pycache__/
+*.pyc
