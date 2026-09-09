@@ -32,7 +32,11 @@ from pmm_scan import (
 TOOL_DIR = _APP_DIR
 
 
-def detect_fixed_drives():
+def system_drive():
+    return os.environ.get("SystemDrive", "C:").rstrip("\\").upper() + "\\"
+
+
+def list_all_fixed_drives():
     """List local fixed drives (DRIVE_FIXED=3), skipping removable/network/CD."""
     DRIVE_FIXED = 3
     drives = []
@@ -44,6 +48,22 @@ def detect_fixed_drives():
         if ctypes.windll.kernel32.GetDriveTypeW(root) == DRIVE_FIXED:
             drives.append(root)
     return drives or ["C:\\"]
+
+
+def detect_fixed_drives(exclude_system=True):
+    """Fixed drives to search by default.
+
+    Excludes the Windows system drive (usually C:) by default: it rarely
+    holds creative asset libraries, is typically the largest/most heavily
+    antivirus-scanned drive on the machine, and scanning it as part of the
+    default search made a first run take an unreasonably long time. Pass
+    --roots explicitly (including the system drive) to override this.
+    """
+    drives = list_all_fixed_drives()
+    if not exclude_system:
+        return drives
+    filtered = [d for d in drives if d.upper() != system_drive()]
+    return filtered or drives
 
 
 def detect_mmd_exe(index, roots):
@@ -236,6 +256,71 @@ def pick_pmm_file():
     return path or None
 
 
+def _drive_label(drive):
+    try:
+        free_bytes = ctypes.c_ulonglong(0)
+        total_bytes = ctypes.c_ulonglong(0)
+        ctypes.windll.kernel32.GetDiskFreeSpaceExW(
+            drive, ctypes.pointer(free_bytes), ctypes.pointer(total_bytes), None
+        )
+        total_gb = total_bytes.value / (1024 ** 3)
+        free_gb = free_bytes.value / (1024 ** 3)
+        size_text = f"（{total_gb:.0f}GB中 空き{free_gb:.0f}GB）"
+    except Exception:
+        size_text = ""
+    tag = "  ※システムドライブ" if drive.upper() == system_drive() else ""
+    return f"{drive}{size_text}{tag}"
+
+
+def pick_roots():
+    """Let the user choose which drives to search, instead of silently
+    scanning every fixed drive. A drive with lots of files (especially the
+    system drive) can turn a first run into a many-minutes wait, worse
+    under real-time antivirus scanning — better to make that cost visible
+    and optional than to surprise people with it."""
+    try:
+        import tkinter
+    except Exception:
+        return None
+
+    all_drives = list_all_fixed_drives()
+    defaults = detect_fixed_drives()
+
+    root = tkinter.Tk()
+    root.title("検索するドライブを選択")
+    root.attributes("-topmost", True)
+    tkinter.Label(
+        root,
+        text="ファイルを探すドライブを選んでください。\n(チェックが多いほど時間がかかります。システムドライブは通常不要です)",
+        justify="left", padx=12, pady=10,
+    ).pack(anchor="w")
+
+    vars_by_drive = {}
+    frame = tkinter.Frame(root, padx=12)
+    frame.pack(anchor="w", fill="x")
+    for d in all_drives:
+        v = tkinter.BooleanVar(value=(d in defaults))
+        tkinter.Checkbutton(frame, text=_drive_label(d), variable=v).pack(anchor="w")
+        vars_by_drive[d] = v
+
+    result = {"roots": None}
+
+    def on_ok():
+        result["roots"] = [d for d, v in vars_by_drive.items() if v.get()]
+        root.destroy()
+
+    def on_cancel():
+        root.destroy()
+
+    btns = tkinter.Frame(root, pady=10)
+    btns.pack()
+    tkinter.Button(btns, text="OK", width=10, command=on_ok).pack(side="left", padx=5)
+    tkinter.Button(btns, text="キャンセル（デフォルトで続行）", command=on_cancel).pack(side="left", padx=5)
+
+    root.mainloop()
+    return result["roots"] or None
+
+
 def main():
     argv = sys.argv[1:]
     # Someone dragging a .pmm straight onto pmm_fixer.exe (instead of the
@@ -252,7 +337,7 @@ def main():
         p.add_argument("pmm_path", nargs="?", default=None,
                         help="対象の .pmm ファイル（省略時はファイル選択ダイアログが開きます）")
         p.add_argument("--roots", nargs="+", default=None,
-                        help="検索対象のドライブ/フォルダ（省略時はPC内の固定ドライブを自動検出）")
+                        help="検索対象のドライブ/フォルダ（省略時はシステムドライブ以外の固定ドライブを自動検出）")
         p.add_argument("--report", default=None, help="出力するExcelファイルのパス")
         p.add_argument("--rebuild-index", action="store_true", help="ファイルインデックスを作り直す")
 
@@ -273,7 +358,7 @@ def main():
             return
 
     if args.roots is None:
-        args.roots = detect_fixed_drives()
+        args.roots = pick_roots() or detect_fixed_drives()
 
     if args.command == "scan":
         do_scan(args.pmm_path, args.roots, args.report, args.rebuild_index)
