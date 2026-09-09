@@ -1,14 +1,9 @@
 @echo off
-if "%~1"=="" (
-    echo Drop a .pmm file onto this bat file.
-    pause
-    exit /b
-)
 cd /d "%~dp0"
 if exist "pmm_fixer.exe" (
-    pmm_fixer.exe scan "%~1"
+    pmm_fixer.exe scan %*
 ) else (
-    python pmm_fixer.py scan "%~1"
+    python pmm_fixer.py scan %*
 )
 echo.
 echo Done. Check the Excel report next to this bat file.

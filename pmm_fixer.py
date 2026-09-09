@@ -215,6 +215,27 @@ def _suggest_save_path(pmm_path):
     return candidate
 
 
+def pick_pmm_file():
+    """No file was passed on the command line — e.g. someone launched the
+    shortcut directly instead of dragging a .pmm onto it. Open a normal
+    file-picker instead of just printing usage text and exiting, since
+    that's a much easier mistake to recover from."""
+    try:
+        import tkinter
+        from tkinter import filedialog
+    except Exception:
+        return None
+    root = tkinter.Tk()
+    root.withdraw()
+    root.attributes("-topmost", True)
+    path = filedialog.askopenfilename(
+        title="調べる/読み込む .pmm ファイルを選んでください",
+        filetypes=[("MikuMikuDance Project", "*.pmm"), ("All files", "*.*")],
+    )
+    root.destroy()
+    return path or None
+
+
 def main():
     argv = sys.argv[1:]
     # Someone dragging a .pmm straight onto pmm_fixer.exe (instead of the
@@ -228,7 +249,8 @@ def main():
     sub = parser.add_subparsers(dest="command", required=True)
 
     def add_common(p):
-        p.add_argument("pmm_path", help="対象の .pmm ファイル")
+        p.add_argument("pmm_path", nargs="?", default=None,
+                        help="対象の .pmm ファイル（省略時はファイル選択ダイアログが開きます）")
         p.add_argument("--roots", nargs="+", default=None,
                         help="検索対象のドライブ/フォルダ（省略時はPC内の固定ドライブを自動検出）")
         p.add_argument("--report", default=None, help="出力するExcelファイルのパス")
@@ -243,6 +265,13 @@ def main():
                          help="MikuMikuDance.exe のパス（省略時は検索対象ドライブ内を自動検索）")
 
     args = parser.parse_args(argv)
+
+    if args.pmm_path is None:
+        args.pmm_path = pick_pmm_file()
+        if args.pmm_path is None:
+            print("ファイルが選択されなかったため終了します。")
+            return
+
     if args.roots is None:
         args.roots = detect_fixed_drives()
 
