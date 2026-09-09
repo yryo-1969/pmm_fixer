@@ -216,6 +216,14 @@ def _suggest_save_path(pmm_path):
 
 
 def main():
+    argv = sys.argv[1:]
+    # Someone dragging a .pmm straight onto pmm_fixer.exe (instead of the
+    # scan/load .bat launchers) would otherwise hit "invalid choice" from
+    # argparse and the console window would vanish before anyone could read
+    # it. Treat a bare "<something>.pmm" first argument as `scan` for that.
+    if argv and argv[0].lower().endswith(".pmm") and os.path.exists(argv[0]):
+        argv = ["scan"] + argv
+
     parser = argparse.ArgumentParser(description="MMD .pmm のリンク切れ調査・修復ツール")
     sub = parser.add_subparsers(dest="command", required=True)
 
@@ -234,7 +242,7 @@ def main():
     p_load.add_argument("--mmd-exe", default=None,
                          help="MikuMikuDance.exe のパス（省略時は検索対象ドライブ内を自動検索）")
 
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     if args.roots is None:
         args.roots = detect_fixed_drives()
 
@@ -245,4 +253,17 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except SystemExit as e:
+        if e.code not in (0, None):
+            print("\n引数の指定に問題があるようです。上の内容を確認してください。")
+            print('例: pmm_fixer.exe scan "対象.pmm"')
+            input("Enterキーを押すと閉じます...")
+        raise
+    except BaseException:
+        import traceback
+        traceback.print_exc()
+        print("\nエラーが発生しました。上の内容を確認してください。")
+        input("Enterキーを押すと閉じます...")
+        sys.exit(1)
