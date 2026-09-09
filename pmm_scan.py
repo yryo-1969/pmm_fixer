@@ -4,7 +4,7 @@ import os
 import re
 import time
 
-REF_EXTS = [b".pmx", b".pmd", b".x", b".vmd", b".vpd"]
+REF_EXTS = [b".pmx", b".pmd", b".x", b".vmd", b".vpd", b".wav", b".avi"]
 _DRIVE_RE = re.compile(r"[A-Za-z]:\\")
 KIND_BY_EXT = {
     ".pmx": "モデル(.pmx)",
@@ -12,6 +12,8 @@ KIND_BY_EXT = {
     ".x": "アクセサリ(.x)",
     ".vmd": "モーション(.vmd)",
     ".vpd": "ポーズ(.vpd)",
+    ".wav": "音声(.wav)",
+    ".avi": "背景動画(.avi)",
 }
 INDEX_CACHE_NAME = "file_index_cache.json"
 

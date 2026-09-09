@@ -224,7 +224,9 @@ def do_load(pmm_path, roots, report_path, rebuild_index, mmd_exe):
 
     print("完了: プロジェクトの読み込みに成功しました。")
 
-    all_resolved = all(r["exists"] or r["resolved_path"] for r in results)
+    media_ok = _reload_resolved_media(mmd_hwnd, mmd_dialogs, results)
+
+    all_resolved = all(r["exists"] or r["resolved_path"] for r in results) and media_ok
     if not all_resolved:
         return
 
@@ -250,6 +252,27 @@ def do_load(pmm_path, roots, report_path, rebuild_index, mmd_exe):
         )
     else:
         print("保存に失敗しました。MMDの画面を確認してください。")
+
+
+def _reload_resolved_media(mmd_hwnd, mmd_dialogs, results):
+    """MMD's own project-load dialogs never offer a substitute-location
+    option for a broken WAV/AVI reference (unlike models/accessories) — it
+    just silently drops it. For anything scan resolved a new path for,
+    load it fresh through the WAV/AVI menu commands instead. Returns False
+    if any resolved media failed to load, so the caller doesn't offer to
+    save a project that's still missing something.
+    """
+    menu_by_kind = {"音声(.wav)": mmd_dialogs.MENU_ID_LOAD_WAV, "背景動画(.avi)": mmd_dialogs.MENU_ID_LOAD_AVI}
+    ok = True
+    for r in results:
+        menu_id = menu_by_kind.get(r["kind"])
+        if menu_id is None or r["exists"] or not r["resolved_path"]:
+            continue
+        print(f"{r['kind']} を読み込み直します: {r['resolved_path']}")
+        if not mmd_dialogs.load_media_file(mmd_hwnd, menu_id, r["resolved_path"]):
+            print(f"  読み込みに失敗しました: {r['resolved_path']}")
+            ok = False
+    return ok
 
 
 def _suggest_save_path(pmm_path):

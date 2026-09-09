@@ -9,6 +9,8 @@ import win32process
 
 MENU_ID_OPEN_PROJECT = 205
 MENU_ID_SAVE_AS = 208
+MENU_ID_LOAD_WAV = 206
+MENU_ID_LOAD_AVI = 213
 WM_COMMAND = win32con.WM_COMMAND
 WM_SETTEXT = win32con.WM_SETTEXT
 EDIT_FILENAME_ID = 1148
@@ -260,6 +262,33 @@ def _wait_for_dialog_with_control(mmd_hwnd, control_id, timeout):
                 return hwnd
         time.sleep(0.3)
     return None
+
+
+def load_media_file(mmd_hwnd, menu_id, path, log=print, step_timeout=15):
+    """Load a WAV/AVI via its File-menu command (206/213). Unlike models and
+    accessories, MMD's own project-load dialog never offers a "specify a
+    substitute location" option for a missing WAV/AVI — it only ever shows
+    a generic, name-less "not found" info box (OK only) and silently drops
+    the reference. The only way to actually fix a broken audio/video link
+    is to load it fresh through this menu after the project has opened,
+    the same way a human would, then save the project."""
+    _ensure_restored(mmd_hwnd)
+    win32gui.PostMessage(mmd_hwnd, WM_COMMAND, (0 << 16) | menu_id, 0)
+    time.sleep(0.5)
+
+    dialog = _wait_for_dialog_with_control(mmd_hwnd, EDIT_FILENAME_ID, step_timeout)
+    if dialog is None:
+        log(f"  ファイルを開くダイアログが出ませんでした: {path}")
+        return False
+
+    fill_and_open_file(dialog, path)
+
+    extra = _wait_for_dialog(mmd_hwnd, 3)
+    if extra is not None:
+        title, static_text = get_dialog_text(extra)
+        log(f"  読み込み後に想定外のダイアログが出ました: title={title!r} text={static_text!r}")
+        return False
+    return True
 
 
 def save_project_as(mmd_hwnd, new_path, log=print, step_timeout=15):
