@@ -209,19 +209,24 @@ def do_load(pmm_path, roots, report_path, rebuild_index, mmd_exe):
                                     popup_all_clear=False)
 
     resolved_by_name = {}
+    model_fallback_queue = []
     for r in results:
         if r["resolved_path"] and not r["exists"]:
             resolved_by_name[r["name"]] = r["resolved_path"]
             base_noext = os.path.splitext(os.path.basename(r["old_path"]))[0]
             resolved_by_name[base_noext] = r["resolved_path"]
             resolved_by_name[os.path.basename(r["old_path"])] = r["resolved_path"]
+            if r["kind"].startswith("モデル"):
+                model_fallback_queue.append(r["resolved_path"])
 
     print(f"MMD起動確認中 ({mmd_exe}) ...")
     mmd_hwnd = mmd_dialogs.launch_mmd(mmd_exe)
     print(f"MMDウィンドウ: {mmd_hwnd}")
 
     print("プロジェクトの自動読み込みを開始します。")
-    ok = mmd_dialogs.run_autoload(mmd_hwnd, os.path.abspath(pmm_path), resolved_by_name)
+    ok = mmd_dialogs.run_autoload(mmd_hwnd, os.path.abspath(pmm_path), resolved_by_name,
+                                   model_fallback_queue=model_fallback_queue,
+                                   pick_model_callback=pick_model_fallback)
     if not ok:
         print("中断: 手動対応が必要なダイアログがあります。MMDの画面を確認してください。")
         return
@@ -338,6 +343,56 @@ def pick_pmm_file():
     if path:
         _save_last_dir(os.path.dirname(path))
     return path or None
+
+
+def pick_model_fallback(dialog_name, candidates):
+    """MMD is asking about a model it calls dialog_name (its own internal
+    object name for that slot, not the filename — e.g. "Null_00" for one
+    that was never named, or some unrelated leftover label from years of
+    reusing a save slot) and name-based matching couldn't find it, but
+    more than one still-unresolved model is available to fill the slot.
+    Guessing which one goes where would risk silently mislabeling a
+    model, so ask the human instead."""
+    try:
+        import tkinter
+    except Exception:
+        return candidates[0]
+
+    root = tkinter.Tk()
+    root.title("モデルの割り当てを選んでください")
+    root.attributes("-topmost", True)
+    tkinter.Label(
+        root,
+        text=f'MMDが "{dialog_name}" という名前のモデルを探しています。\n'
+             "ファイル名からは特定できなかったので、どれを使うか選んでください。\n"
+             "(このモデルの本来の名前ではなく、MMD内部の管理名です)",
+        justify="left", padx=12, pady=10,
+    ).pack(anchor="w")
+
+    listbox = tkinter.Listbox(root, width=100, height=min(10, len(candidates)))
+    for c in candidates:
+        listbox.insert(tkinter.END, c)
+    listbox.select_set(0)
+    listbox.pack(padx=12, pady=(0, 10), fill="both", expand=True)
+
+    result = {"path": None}
+
+    def on_ok():
+        sel = listbox.curselection()
+        if sel:
+            result["path"] = candidates[sel[0]]
+        root.destroy()
+
+    def on_skip():
+        root.destroy()
+
+    btns = tkinter.Frame(root, pady=10)
+    btns.pack()
+    tkinter.Button(btns, text="これを使う", width=12, command=on_ok).pack(side="left", padx=5)
+    tkinter.Button(btns, text="スキップ", command=on_skip).pack(side="left", padx=5)
+
+    root.mainloop()
+    return result["path"]
 
 
 def _drive_label(drive):

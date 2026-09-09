@@ -131,16 +131,21 @@ def click_dialog_button(hwnd, control_id):
     # cascade into MMD showing the next dialog before returning from the
     # WM_COMMAND handler. SendMessage would block this thread until that
     # whole chain goes idle, deadlocking against our own polling loop.
-    btn = win32gui.GetDlgItem(hwnd, control_id)
+    # find_control, not GetDlgItem: some dialog styles (seen so far on the
+    # Save-As picker, and occasionally on a plain Open picker too — maybe
+    # a timing thing while the dialog is still constructing its children)
+    # nest their controls below the dialog's direct children, which
+    # GetDlgItem can't see.
+    btn = find_control(hwnd, control_id)
     win32gui.PostMessage(hwnd, WM_COMMAND, (0 << 16) | control_id, btn)
     _wait_for_close(hwnd)
 
 
 def fill_and_open_file(hwnd, path):
-    edit = win32gui.GetDlgItem(hwnd, EDIT_FILENAME_ID)
+    edit = find_control(hwnd, EDIT_FILENAME_ID)
     win32gui.SendMessage(edit, WM_SETTEXT, 0, path)
     time.sleep(0.2)
-    open_btn = win32gui.GetDlgItem(hwnd, OPEN_BUTTON_ID)
+    open_btn = find_control(hwnd, OPEN_BUTTON_ID)
     win32gui.PostMessage(hwnd, WM_COMMAND, (0 << 16) | OPEN_BUTTON_ID, open_btn)
     _wait_for_close(hwnd)
 
@@ -166,27 +171,66 @@ MODEL_SKIP_ID = 688
 MODEL_ABORT_ID = 689
 
 
-def run_autoload(mmd_hwnd, pmm_path, resolved_by_name, log=print, max_steps=200, step_timeout=15):
-    """Drive the project-load dialog sequence. resolved_by_name: {basename_without_ext_or_full: path}."""
+def run_autoload(mmd_hwnd, pmm_path, resolved_by_name, model_fallback_queue=None,
+                  pick_model_callback=None, log=print, max_steps=200, step_timeout=15):
+    """Drive the project-load dialog sequence.
+
+    resolved_by_name: {basename_without_ext_or_full: path} for name-based lookup.
+    model_fallback_queue: an ordered list of resolved model (.pmx/.pmd) paths,
+    in the same order they were found while scanning the PMM. The "model
+    file not found" dialog shows MMD's own internal object name for that
+    model slot (editable in MMD, e.g. "Null_00" for one that was never
+    named, or some unrelated leftover label from years of reusing a save
+    slot) — not the filename — so name-based lookup can legitimately find
+    nothing even though scan resolved a path for that exact model.
+    When name lookup fails: if exactly one unresolved model is left, use
+    it (no real choice to make). If more than one remains, this could
+    guess by scan order, but that's still a guess — instead call
+    pick_model_callback(dialog_name, remaining_paths) and let the human
+    decide, since picking the wrong one would silently mislabel a model.
+    pick_model_callback should return a chosen path (removed from the
+    queue by the caller) or None to skip.
+    """
     trigger_open_project(mmd_hwnd)
     time.sleep(0.5)
+    fallback_queue = list(model_fallback_queue or [])
+    consumed_paths = set()
 
     def lookup(name):
+        path = None
         if name in resolved_by_name:
-            return resolved_by_name[name]
-        for key, path in resolved_by_name.items():
-            if key.endswith(name) or name.endswith(key):
-                return path
-        return None
+            path = resolved_by_name[name]
+        else:
+            for key, candidate in resolved_by_name.items():
+                if key.endswith(name) or name.endswith(key):
+                    path = candidate
+                    break
+        if path:
+            consumed_paths.add(path)
+        return path
 
-    first_dialog = _wait_for_dialog(mmd_hwnd, step_timeout)
-    if first_dialog is None:
-        raise RuntimeError("ファイルを開くダイアログが現れませんでした")
-    fill_and_open_file(first_dialog, pmm_path)
+    def next_model_fallback(dialog_name):
+        remaining = [p for p in fallback_queue if p not in consumed_paths]
+        if not remaining:
+            return None
+        if len(remaining) == 1:
+            path = remaining[0]
+        elif pick_model_callback:
+            path = pick_model_callback(dialog_name, remaining)
+        else:
+            path = remaining[0]
+        if path:
+            consumed_paths.add(path)
+            fallback_queue.remove(path)
+        return path
+
+    pmm_path_submitted = False
 
     for step in range(max_steps):
         dialog = _wait_for_dialog(mmd_hwnd, step_timeout)
         if dialog is None:
+            if not pmm_path_submitted:
+                raise RuntimeError("ファイルを開くダイアログが現れませんでした")
             title = win32gui.GetWindowText(mmd_hwnd)
             if pmm_path.split("\\")[-1] in title:
                 log("読み込み完了。")
@@ -197,12 +241,22 @@ def run_autoload(mmd_hwnd, pmm_path, resolved_by_name, log=print, max_steps=200,
         title, static_text = get_dialog_text(dialog)
         log(f"[{step}] dialog title={title!r} text={static_text!r}")
 
+        if title == "ファイルを開く" and not pmm_path_submitted and has_control(dialog, EDIT_FILENAME_ID):
+            fill_and_open_file(dialog, pmm_path)
+            pmm_path_submitted = True
+            continue
+
         if title == "pmm ver.2.0 ロード":
             m = MODEL_MISSING_RE.search(static_text)
             name = m.group(1) if m else ""
             path = lookup(name)
+            fell_back = False
+            if not path:
+                path = next_model_fallback(name)
+                fell_back = path is not None
             if path:
-                log(f"  -> 場所を指定: {name} = {path}")
+                how = "（名前が一致しないため代替割り当て）" if fell_back else ""
+                log(f"  -> 場所を指定: {name} = {path} {how}")
                 click_dialog_button(dialog, MODEL_SPECIFY_ID)
                 time.sleep(0.4)
                 browse = _wait_for_dialog(mmd_hwnd, step_timeout)

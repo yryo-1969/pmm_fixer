@@ -24,11 +24,16 @@ def extract_pmm_refs(pmm_path):
     inside the run so any leading junk bytes (previous field's tail) are
     discarded. Longer matches make shorter ones redundant; only keep
     strings that were not fully contained in a longer one.
+
+    Returns them in PMM byte order (the order objects were actually
+    written to the file), not alphabetically — callers that fall back to
+    positional matching against MMD's own load-order dialogs (see
+    mmd_dialogs.run_autoload's model_fallback_queue) depend on this.
     """
     with open(pmm_path, "rb") as f:
         data = f.read()
 
-    raw_hits = set()
+    raw_hits = {}  # decoded string -> earliest byte offset seen at
     for ext in REF_EXTS:
         start_search = 0
         while True:
@@ -51,15 +56,16 @@ def extract_pmm_refs(pmm_path):
                 matches = list(_DRIVE_RE.finditer(decoded))
                 if matches:
                     decoded = decoded[matches[-1].start():]
-                    raw_hits.add(decoded)
+                    if decoded not in raw_hits or i < raw_hits[decoded]:
+                        raw_hits[decoded] = i
             start_search = end
 
-    found = set()
-    for h in raw_hits:
+    found = {}
+    for h, offset in raw_hits.items():
         if any(h != other and h in other for other in raw_hits):
             continue
-        found.add(h)
-    return sorted(found)
+        found[h] = offset
+    return [h for h, _off in sorted(found.items(), key=lambda kv: kv[1])]
 
 
 def build_file_index(roots, cache_dir, force_rebuild=False, on_progress=None):
