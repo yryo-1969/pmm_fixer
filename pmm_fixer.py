@@ -286,11 +286,37 @@ def _suggest_save_path(pmm_path):
     return candidate
 
 
+_LAST_DIR_FILE = "last_pmm_dir.txt"
+
+
+def _load_last_dir():
+    path = os.path.join(TOOL_DIR, _LAST_DIR_FILE)
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            d = f.read().strip()
+        return d if d and os.path.isdir(d) else None
+    except Exception:
+        return None
+
+
+def _save_last_dir(folder):
+    try:
+        with open(os.path.join(TOOL_DIR, _LAST_DIR_FILE), "w", encoding="utf-8") as f:
+            f.write(folder)
+    except Exception:
+        pass
+
+
 def pick_pmm_file():
     """No file was passed on the command line — e.g. someone launched the
     shortcut directly instead of dragging a .pmm onto it. Open a normal
     file-picker instead of just printing usage text and exiting, since
-    that's a much easier mistake to recover from."""
+    that's a much easier mistake to recover from.
+
+    Where PMM projects live varies a lot from person to person, so instead
+    of guessing a folder, remember whatever folder was picked from last
+    time and start there next time.
+    """
     try:
         import tkinter
         from tkinter import filedialog
@@ -302,8 +328,11 @@ def pick_pmm_file():
     path = filedialog.askopenfilename(
         title="調べる/読み込む .pmm ファイルを選んでください",
         filetypes=[("MikuMikuDance Project", "*.pmm"), ("All files", "*.*")],
+        initialdir=_load_last_dir(),
     )
     root.destroy()
+    if path:
+        _save_last_dir(os.path.dirname(path))
     return path or None
 
 
