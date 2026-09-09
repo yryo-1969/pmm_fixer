@@ -11,3 +11,6 @@ dist2/
 *.spec
 pmm_fixer.exe
 icon.ico
+app/
+pmm_fixer_app.zip
+test_*.log

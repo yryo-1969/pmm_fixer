@@ -14,7 +14,7 @@ MikuMikuDance の `.pmm` プロジェクトファイルは、モデル・アク�
 
 ## ダウンロード（Pythonなしで使う）
 
-Pythonを入れたくない場合は、[Releases](../../releases) から `pmm_fixer.exe` をダウンロードして、`1_scan_report.bat` / `2_load_into_mmd.bat` と同じフォルダに置くだけで使えます。バッチファイル自体は `pmm_fixer.exe`（無ければ `python pmm_fixer.py`）を自動で呼び分けます。
+Pythonを入れたくない場合は、[Releases](../../releases) から `pmm_fixer_app.zip` をダウンロードして展開し、中の `app` フォルダを `1_scan_report.bat` / `2_load_into_mmd.bat` と同じフォルダに置くだけで使えます。バッチファイル自体は `app\pmm_fixer.exe`（無ければ `python pmm_fixer.py`）を自動で呼び分けます。
 
 ## 使い方
 
@@ -53,7 +53,7 @@ python pmm_fixer.py scan "対象.pmm"
 - `openpyxl`（Excel出力）
 - `pywin32`（MikuMikuDanceのウィンドウ・ダイアログ操作）
 
-自分でexe化したい場合は `pip install pyinstaller` の上で `pyinstaller --onefile --name pmm_fixer pmm_fixer.py` です。
+自分でexe化したい場合は `pip install pyinstaller` の上で `pyinstaller --onedir --name pmm_fixer pmm_fixer.py` です（`dist\pmm_fixer` フォルダを `app` にリネームして使ってください）。`--onefile`（単一exe化）も可能ですが、自己解凍の動きがウイルス対策ソフトに誤検知されやすいため、`--onedir` を推奨します。
 
 ## 仕組みについて
 
@@ -73,7 +73,10 @@ python pmm_fixer.py scan "対象.pmm"
 よくある原因は2つあります。
 
 1. **ショートカット/`.bat`を先にダブルクリックで開いてから、その中に`.pmm`をドラッグしている** — これは認識されません。「続行するには何かキーを押してください」の状態でファイルをドロップすると、それがキー入力扱いになってそのまま閉じてしまいます。正しくは、ファイルを**アイコンの上に直接**ドラッグ＆ドロップするか、何もせずダブルクリックして開いたときに出るファイル選択ダイアログでファイルを選んでください。
-2. **ウイルス対策ソフト（Norton等）が実行をブロック・隔離している** — 個人開発の署名なしexeによくある誤検知です。ウイルス対策ソフトの「検疫」「セキュリティ履歴」から `pmm_fixer.exe` が隔離されていないか確認し、隔離されていれば復元＋除外設定に追加してください。それでも気になる場合は、exeを使わず [ソースから実行](#ソースから使う場合のセットアップ) する方法（`python pmm_fixer.py ...`）であればこの問題は避けられます。
+2. **ウイルス対策ソフト（Norton等）が警告・ブロック・隔離している** — 個人開発の署名なしexeによくある誤検知です（Win32 APIでMikuMikuDanceのウィンドウを操作する動き自体が、一部のヒューリスティック検知に引っかかりやすいのも一因です）。
+   - **警告ポップアップが出るだけの場合**: 「詳細情報」→「実行を許可」のような選択肢があればそれを選べば進めます。
+   - **ブロック・隔離される場合**: ウイルス対策ソフトの「検疫」「セキュリティ履歴」から `app\pmm_fixer.exe` が隔離されていないか確認し、隔離されていれば復元＋除外設定（`app` フォルダごと）に追加してください。
+   - それでも気になる場合は、exeを使わず [ソースから実行](#ソースから使う場合のセットアップ) する方法（`python pmm_fixer.py ...`）であればこの問題は避けられます。
 
 ## ライセンス
 

@@ -1,6 +1,8 @@
 @echo off
 cd /d "%~dp0"
-if exist "pmm_fixer.exe" (
+if exist "app\pmm_fixer.exe" (
+    "app\pmm_fixer.exe" scan %*
+) else if exist "pmm_fixer.exe" (
     pmm_fixer.exe scan %*
 ) else (
     python pmm_fixer.py scan %*

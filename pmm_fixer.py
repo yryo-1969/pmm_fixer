@@ -17,7 +17,16 @@ import string
 import sys
 
 if getattr(sys, "frozen", False):
-    _APP_DIR = os.path.dirname(os.path.abspath(sys.executable))
+    # Reports/cache should land next to the .bat launcher the user actually
+    # sees, not next to the exe itself — the onedir build tucks the exe away
+    # in an app/ subfolder to look less like a dropper to antivirus heuristics.
+    # The .bat does `cd /d "%~dp0"` before invoking us, so the process's own
+    # cwd is the right place; only fall back to the exe's own folder (e.g.
+    # someone double-clicked app\pmm_fixer.exe directly) if that cwd looks
+    # like it's actually inside the exe's own install tree.
+    _exe_dir = os.path.dirname(os.path.abspath(sys.executable))
+    _cwd = os.path.abspath(os.getcwd())
+    _APP_DIR = _cwd if os.path.commonpath([_cwd, _exe_dir]) == _cwd and _cwd != _exe_dir else _exe_dir
 else:
     _APP_DIR = os.path.dirname(os.path.abspath(__file__))
     sys.path.insert(0, _APP_DIR)
