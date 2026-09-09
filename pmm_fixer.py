@@ -16,7 +16,11 @@ import os
 import string
 import sys
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+if getattr(sys, "frozen", False):
+    _APP_DIR = os.path.dirname(os.path.abspath(sys.executable))
+else:
+    _APP_DIR = os.path.dirname(os.path.abspath(__file__))
+    sys.path.insert(0, _APP_DIR)
 
 from pmm_scan import (
     build_file_index,
@@ -25,7 +29,7 @@ from pmm_scan import (
     write_report_xlsx,
 )
 
-TOOL_DIR = os.path.dirname(os.path.abspath(__file__))
+TOOL_DIR = _APP_DIR
 
 
 def detect_fixed_drives():

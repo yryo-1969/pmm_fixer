@@ -12,6 +12,10 @@ MikuMikuDance の `.pmm` プロジェクトファイルは、モデル・アク�
 
 をやってくれるツールです。Windows専用（MikuMikuDance本体がWindows専用のため）。
 
+## ダウンロード（Pythonなしで使う）
+
+Pythonを入れたくない場合は、[Releases](../../releases) から `pmm_fixer.exe` をダウンロードして、`1_scan_report.bat` / `2_load_into_mmd.bat` と同じフォルダに置くだけで使えます。バッチファイル自体は `pmm_fixer.exe`（無ければ `python pmm_fixer.py`）を自動で呼び分けます。
+
 ## 使い方（ドラッグ＆ドロップ）
 
 `1_scan_report.bat` または `2_load_into_mmd.bat` に `.pmm` ファイルをドラッグ＆ドロップするだけです。
@@ -19,30 +23,35 @@ MikuMikuDance の `.pmm` プロジェクトファイルは、モデル・アク�
 - **1_scan_report.bat**: 壊れているリンクを調べてExcelレポートを作るだけ。MMDは操作しません。
 - **2_load_into_mmd.bat**: 調査した上で、MikuMikuDanceを起動（未起動なら）してプロジェクトを開き、見つかった代替パスを自動で入力します。候補が見つからないファイルがあれば、安全のためそこで自動処理を止めて、MMD側のダイアログを手動対応してもらう形になります。
 
-初回実行時、指定したドライブ全体のファイル一覧（インデックス）を作るため数分かかることがあります。2回目以降はキャッシュ（`file_index_cache.json`）を使うので高速です。ドライブの中身をまた整理した後は `--rebuild-index` を付けて実行してください。
+初回実行時、指定したドライブ全体のファイル一覧（インデックス）を作るため数分かかることがあります（ウイルス対策ソフトのリアルタイムスキャンが有効だと、ファイル数が多いドライブではさらに遅くなることがあります）。2回目以降は同じフォルダに保存されるキャッシュ（`file_index_cache.json`）を使うので高速です。ドライブの中身をまた整理した後は `--rebuild-index` を付けて実行してください。
 
 ## コマンドラインでの使い方
 
 ```bat
-python pmm_fixer.py scan  "対象.pmm" [--roots M:\ E:\] [--report 出力.xlsx] [--rebuild-index]
-python pmm_fixer.py load  "対象.pmm" [--mmd-exe "パス\MikuMikuDance.exe"] [--roots M:\ E:\] [--rebuild-index]
+pmm_fixer.exe scan  "対象.pmm" [--roots M:\ E:\] [--report 出力.xlsx] [--rebuild-index]
+pmm_fixer.exe load  "対象.pmm" [--mmd-exe "パス\MikuMikuDance.exe"] [--roots M:\ E:\] [--rebuild-index]
 ```
+
+（ソースから実行する場合は `pmm_fixer.exe` を `python pmm_fixer.py` に読み替えてください）
 
 `--roots` と `--mmd-exe` を省略すると、それぞれPC内の固定ドライブ全部・MikuMikuDance.exeの場所を自動検出しようとします（検出できない場合はエラーになるので、明示的に指定してください）。
 
-## セットアップ
+## ソースから使う場合のセットアップ
 
 ```bat
 pip install -r requirements.txt
+python pmm_fixer.py scan "対象.pmm"
 ```
 
 - Python 3.9+ （Windows）
 - `openpyxl`（Excel出力）
 - `pywin32`（MikuMikuDanceのウィンドウ・ダイアログ操作）
 
+自分でexe化したい場合は `pip install pyinstaller` の上で `pyinstaller --onefile --name pmm_fixer pmm_fixer.py` です。
+
 ## 仕組みについて
 
-- `.pmm` はバイナリ形式で公式な仕様書はありませんが、モデル/アクセサリ/モーションのファイルパスは長さプレフィックス付きのCP932(Shift-JIS)文字列としてほぼそのまま埋め込まれています。`pmm_scan.py` はこれをバイト列から抽出しています。
+- `.pmm` はバイナリ形式で公式な仕様書はありませんが、モデル/アクセサリ/モーションのファイルパスはCP932(Shift-JIS)の文字列としてほぼそのまま埋め込まれています。`pmm_scan.py` は各ファイル拡張子の出現位置からヌルバイト（制御バイト）まで遡って文字列を切り出し、ドライブレター（`X:\`）から始まる部分だけを採用することでパスを抽出しています。
 - `mmd_dialogs.py` は、MikuMikuDance本体のメニューコマンド（File > 開く、など）とファイル読み込みダイアログをWin32 API経由で自動操作し、見つかった代替パスを入力します。未対応の状態（例えば置き換え候補が全く見つからないアクセサリ）に遭遇した場合は、それ以上は自動で進めず停止します — 変な状態のままダイアログを閉じ続けて後で気付きにくい破損を招くよりは、その場で止めて手動対応してもらう方が安全という考え方です。
 
 ## 注意事項

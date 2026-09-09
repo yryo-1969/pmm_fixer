@@ -92,9 +92,25 @@ def has_control(hwnd, control_id):
         return False
 
 
+def _wait_for_close(hwnd, timeout=10):
+    """Poll until hwnd stops being a valid window, so callers don't re-detect
+    the same dialog (mid-close, after an async PostMessage click) as new."""
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if not win32gui.IsWindow(hwnd):
+            return True
+        time.sleep(0.1)
+    return False
+
+
 def click_dialog_button(hwnd, control_id):
+    # PostMessage, not SendMessage: clicking a button can synchronously
+    # cascade into MMD showing the next dialog before returning from the
+    # WM_COMMAND handler. SendMessage would block this thread until that
+    # whole chain goes idle, deadlocking against our own polling loop.
     btn = win32gui.GetDlgItem(hwnd, control_id)
-    win32gui.SendMessage(hwnd, WM_COMMAND, (0 << 16) | control_id, btn)
+    win32gui.PostMessage(hwnd, WM_COMMAND, (0 << 16) | control_id, btn)
+    _wait_for_close(hwnd)
 
 
 def fill_and_open_file(hwnd, path):
@@ -102,11 +118,12 @@ def fill_and_open_file(hwnd, path):
     win32gui.SendMessage(edit, WM_SETTEXT, 0, path)
     time.sleep(0.2)
     open_btn = win32gui.GetDlgItem(hwnd, OPEN_BUTTON_ID)
-    win32gui.SendMessage(hwnd, WM_COMMAND, (0 << 16) | OPEN_BUTTON_ID, open_btn)
+    win32gui.PostMessage(hwnd, WM_COMMAND, (0 << 16) | OPEN_BUTTON_ID, open_btn)
+    _wait_for_close(hwnd)
 
 
 def trigger_open_project(mmd_hwnd):
-    win32gui.SendMessage(mmd_hwnd, WM_COMMAND, (0 << 16) | MENU_ID_OPEN_PROJECT, 0)
+    win32gui.PostMessage(mmd_hwnd, WM_COMMAND, (0 << 16) | MENU_ID_OPEN_PROJECT, 0)
 
 
 MODEL_MISSING_RE = re.compile(r'"(.+?)"のモデルファイルが見つかりません')

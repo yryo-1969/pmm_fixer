@@ -2,5 +2,11 @@ file_index_cache.json
 *.xlsx
 out*.txt
 err*.txt
+run_out*.log
 __pycache__/
 *.pyc
+build/
+dist/
+dist2/
+*.spec
+pmm_fixer.exe

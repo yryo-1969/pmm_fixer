@@ -5,6 +5,10 @@ if "%~1"=="" (
     exit /b
 )
 cd /d "%~dp0"
-python pmm_fixer.py load "%~1"
+if exist "pmm_fixer.exe" (
+    pmm_fixer.exe load "%~1"
+) else (
+    python pmm_fixer.py load "%~1"
+)
 echo.
 pause
