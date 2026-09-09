@@ -160,7 +160,11 @@ def do_scan(pmm_path, roots, report_path, rebuild_index, index_bundle=None, popu
 
     index, built_at, used_roots = index_bundle or get_index(roots, rebuild_index)
 
-    results = resolve_refs(refs, index)
+    try:
+        pmm_mtime = os.path.getmtime(pmm_path)
+    except OSError:
+        pmm_mtime = None
+    results = resolve_refs(refs, index, pmm_mtime=pmm_mtime)
 
     ok = sum(1 for r in results if r["exists"])
     auto = sum(1 for r in results if not r["exists"] and r["resolved_path"])

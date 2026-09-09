@@ -112,7 +112,33 @@ def _path_similarity(old_path, candidate_path):
     return score
 
 
-def resolve_refs(refs, index):
+def _pick_by_date(candidates, pmm_mtime):
+    """Tie-break same-similarity-score candidates by modification time: the
+    PMM can only ever have referenced a file that already existed when it
+    was saved, so prefer whichever tied candidate is the newest among those
+    no newer than the PMM itself (closest match to what was actually there
+    at the time). If every tied candidate is newer than the PMM (unusual —
+    e.g. the whole folder got touched by a later copy/reorganize), fall
+    back to the oldest one instead of guessing among files that all
+    postdate the reference.
+    """
+    if pmm_mtime is None:
+        return None
+    dated = []
+    for c in candidates:
+        try:
+            dated.append((os.path.getmtime(c), c))
+        except OSError:
+            continue
+    if not dated:
+        return None
+    older_or_equal = [d for d in dated if d[0] <= pmm_mtime]
+    if older_or_equal:
+        return max(older_or_equal, key=lambda d: d[0])[1]
+    return min(dated, key=lambda d: d[0])[1]
+
+
+def resolve_refs(refs, index, pmm_mtime=None):
     results = []
     for ref in refs:
         basename = os.path.basename(ref)
@@ -136,13 +162,21 @@ def resolve_refs(refs, index):
                 entry["resolved_path"] = candidates[0]
                 entry["status"] = "対応済み（自動検出・候補1件）"
             elif len(candidates) > 1:
-                scored = sorted(candidates, key=lambda c: -_path_similarity(ref, c))
-                best = scored[0]
-                best_score = _path_similarity(ref, best)
-                second_score = _path_similarity(ref, scored[1]) if len(scored) > 1 else -1
-                if best_score > 0 and best_score > second_score:
-                    entry["resolved_path"] = best
+                best_score = max(_path_similarity(ref, c) for c in candidates)
+                tied = [c for c in candidates if _path_similarity(ref, c) == best_score]
+                if best_score > 0 and len(tied) == 1:
+                    entry["resolved_path"] = tied[0]
                     entry["status"] = f"対応済み（自動検出・候補{len(candidates)}件から最有力を選択）"
+                elif best_score > 0 and len(tied) > 1:
+                    picked = _pick_by_date(tied, pmm_mtime)
+                    if picked:
+                        entry["resolved_path"] = picked
+                        entry["status"] = (
+                            f"対応済み（候補{len(candidates)}件中{len(tied)}件が同点、"
+                            "PMMの日付に近いものを選択）"
+                        )
+                    else:
+                        entry["status"] = f"要確認（候補{len(candidates)}件、絞り込めず）"
                 else:
                     entry["status"] = f"要確認（候補{len(candidates)}件、絞り込めず）"
             else:
