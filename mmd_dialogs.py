@@ -8,9 +8,11 @@ import win32gui
 import win32process
 
 MENU_ID_OPEN_PROJECT = 205
+MENU_ID_SAVE_AS = 208
 WM_COMMAND = win32con.WM_COMMAND
 WM_SETTEXT = win32con.WM_SETTEXT
 EDIT_FILENAME_ID = 1148
+SAVE_EDIT_FILENAME_ID = 1001
 OPEN_BUTTON_ID = 1
 CANCEL_BUTTON_ID = 2
 
@@ -36,12 +38,12 @@ def find_mmd_window(timeout=15):
 
 def launch_mmd(exe_path, timeout=20):
     hwnd = find_mmd_window(timeout=1)
-    if hwnd:
-        return hwnd
-    subprocess.Popen([exe_path], cwd=exe_path.rsplit("\\", 1)[0])
-    hwnd = find_mmd_window(timeout=timeout)
     if not hwnd:
-        raise RuntimeError("MMDの起動を確認できませんでした")
+        subprocess.Popen([exe_path], cwd=exe_path.rsplit("\\", 1)[0])
+        hwnd = find_mmd_window(timeout=timeout)
+        if not hwnd:
+            raise RuntimeError("MMDの起動を確認できませんでした")
+    _ensure_restored(hwnd)
     return hwnd
 
 
@@ -85,11 +87,30 @@ def get_dialog_text(hwnd):
     return text, static.strip()
 
 
-def has_control(hwnd, control_id):
+def find_control(hwnd, control_id):
+    """Find a descendant control by ID at any nesting depth. GetDlgItem only
+    looks at direct children, which misses controls nested inside a shell
+    view container (e.g. the Vista-style Save-As dialog's edit box)."""
+    found = []
+
+    def cb(child, _):
+        try:
+            if win32gui.GetDlgCtrlID(child) == control_id:
+                found.append(child)
+                return False
+        except Exception:
+            pass
+        return True
+
     try:
-        return win32gui.GetDlgItem(hwnd, control_id) != 0
+        win32gui.EnumChildWindows(hwnd, cb, None)
     except Exception:
-        return False
+        pass
+    return found[0] if found else None
+
+
+def has_control(hwnd, control_id):
+    return find_control(hwnd, control_id) is not None
 
 
 def _wait_for_close(hwnd, timeout=10):
@@ -122,7 +143,16 @@ def fill_and_open_file(hwnd, path):
     _wait_for_close(hwnd)
 
 
+def _ensure_restored(mmd_hwnd):
+    # A dialog opened while the owner is minimized can end up created but not
+    # shown, so menu-triggered dialogs are unreliable unless we restore first.
+    if win32gui.IsIconic(mmd_hwnd):
+        win32gui.ShowWindow(mmd_hwnd, win32con.SW_RESTORE)
+        time.sleep(0.3)
+
+
 def trigger_open_project(mmd_hwnd):
+    _ensure_restored(mmd_hwnd)
     win32gui.PostMessage(mmd_hwnd, WM_COMMAND, (0 << 16) | MENU_ID_OPEN_PROJECT, 0)
 
 
@@ -217,6 +247,55 @@ def run_autoload(mmd_hwnd, pmm_path, resolved_by_name, log=print, max_steps=200,
         return False
 
     log("ステップ数上限に達しました。")
+    return False
+
+
+def _wait_for_dialog_with_control(mmd_hwnd, control_id, timeout):
+    """Like _wait_for_dialog, but keeps polling past a transient/unrelated
+    window until one actually carrying control_id shows up (or timeout)."""
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        for hwnd in list_owned_dialogs(mmd_hwnd):
+            if has_control(hwnd, control_id):
+                return hwnd
+        time.sleep(0.3)
+    return None
+
+
+def save_project_as(mmd_hwnd, new_path, log=print, step_timeout=15):
+    """Trigger File > Save As and save to new_path. Returns True on success.
+    Bails out (returns False) on any dialog it doesn't recognize, rather
+    than guessing — e.g. an unexpected overwrite-confirmation prompt."""
+    _ensure_restored(mmd_hwnd)
+    win32gui.PostMessage(mmd_hwnd, WM_COMMAND, (0 << 16) | MENU_ID_SAVE_AS, 0)
+    time.sleep(0.5)
+
+    dialog = _wait_for_dialog_with_control(mmd_hwnd, SAVE_EDIT_FILENAME_ID, step_timeout)
+    if dialog is None:
+        log("名前を付けて保存ダイアログが開きませんでした。")
+        return False
+
+    edit = find_control(dialog, SAVE_EDIT_FILENAME_ID)
+    win32gui.SendMessage(edit, WM_SETTEXT, 0, new_path)
+    time.sleep(0.2)
+    save_btn = find_control(dialog, OPEN_BUTTON_ID)
+    win32gui.PostMessage(dialog, WM_COMMAND, (0 << 16) | OPEN_BUTTON_ID, save_btn)
+    _wait_for_close(dialog)
+
+    extra = _wait_for_dialog(mmd_hwnd, 3)
+    if extra is not None:
+        title, static_text = get_dialog_text(extra)
+        log(f"保存後に想定外のダイアログが出ました: title={title!r} text={static_text!r}")
+        log("MMDの画面を確認して手動対応してください。")
+        return False
+
+    target_name = new_path.split("\\")[-1]
+    deadline = time.time() + 5
+    while time.time() < deadline:
+        if target_name in win32gui.GetWindowText(mmd_hwnd):
+            return True
+        time.sleep(0.3)
+    log("保存できたか確認できませんでした。MMDの画面を確認してください。")
     return False
 
 

@@ -67,9 +67,12 @@ def get_index(roots, rebuild_index):
 
 
 MB_OK = 0x0
+MB_YESNO = 0x4
 MB_ICONWARNING = 0x30
 MB_ICONINFORMATION = 0x40
+MB_ICONQUESTION = 0x20
 MB_TOPMOST = 0x40000
+IDYES = 6
 
 
 def notify_missing(pmm_path, results, report_path, show_all_clear=True):
@@ -167,10 +170,49 @@ def do_load(pmm_path, roots, report_path, rebuild_index, mmd_exe):
 
     print("プロジェクトの自動読み込みを開始します。")
     ok = mmd_dialogs.run_autoload(mmd_hwnd, os.path.abspath(pmm_path), resolved_by_name)
-    if ok:
-        print("完了: プロジェクトの読み込みに成功しました。")
-    else:
+    if not ok:
         print("中断: 手動対応が必要なダイアログがあります。MMDの画面を確認してください。")
+        return
+
+    print("完了: プロジェクトの読み込みに成功しました。")
+
+    all_resolved = all(r["exists"] or r["resolved_path"] for r in results)
+    if not all_resolved:
+        return
+
+    answer = ctypes.windll.user32.MessageBoxW(
+        0,
+        "全てのリンク切れが解決できました。\n\n"
+        "修復済みのプロジェクトを別名で保存しますか？\n"
+        "（元のファイルはそのまま残ります）",
+        "pmm_fixer - 別名保存の確認",
+        MB_YESNO | MB_ICONQUESTION | MB_TOPMOST,
+    )
+    if answer != IDYES:
+        return
+
+    new_path = _suggest_save_path(pmm_path)
+    print(f"別名保存中: {new_path}")
+    saved = mmd_dialogs.save_project_as(mmd_hwnd, new_path)
+    if saved:
+        print(f"保存完了: {new_path}")
+        ctypes.windll.user32.MessageBoxW(
+            0, f"保存しました:\n{new_path}", "pmm_fixer - 保存完了",
+            MB_OK | MB_ICONINFORMATION | MB_TOPMOST,
+        )
+    else:
+        print("保存に失敗しました。MMDの画面を確認してください。")
+
+
+def _suggest_save_path(pmm_path):
+    folder = os.path.dirname(os.path.abspath(pmm_path))
+    base = os.path.splitext(os.path.basename(pmm_path))[0]
+    candidate = os.path.join(folder, f"{base}_修復済み.pmm")
+    n = 2
+    while os.path.exists(candidate):
+        candidate = os.path.join(folder, f"{base}_修復済み{n}.pmm")
+        n += 1
+    return candidate
 
 
 def main():
