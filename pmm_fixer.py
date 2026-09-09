@@ -66,7 +66,51 @@ def get_index(roots, rebuild_index):
     return index, built_at, used_roots
 
 
-def do_scan(pmm_path, roots, report_path, rebuild_index, index_bundle=None):
+MB_OK = 0x0
+MB_ICONWARNING = 0x30
+MB_ICONINFORMATION = 0x40
+MB_TOPMOST = 0x40000
+
+
+def notify_missing(pmm_path, results, report_path, show_all_clear=True):
+    """Pop up a plain message box so a non-technical user notices unresolved
+    files without having to read the console or open the Excel report."""
+    not_found = [r for r in results if not r["exists"] and not r["resolved_path"] and not r["candidates"]]
+    ambiguous = [r for r in results if not r["exists"] and not r["resolved_path"] and r["candidates"]]
+    unresolved = not_found + ambiguous
+    if not unresolved:
+        if not show_all_clear:
+            return
+        ctypes.windll.user32.MessageBoxW(
+            0,
+            f"{os.path.basename(pmm_path)}\n\n"
+            "リンク切れは見つかりませんでした。全て解決済みです。\n\n"
+            f"詳細レポート:\n{report_path}",
+            "pmm_fixer - 調査完了",
+            MB_OK | MB_ICONINFORMATION | MB_TOPMOST,
+        )
+        return
+
+    lines = []
+    for r in not_found[:10]:
+        lines.append(f"・{r['name']}（候補なし）")
+    for r in ambiguous[:10]:
+        lines.append(f"・{r['name']}（候補{len(r['candidates'])}件、絞り込めず）")
+    shown = len(lines)
+    remaining = len(unresolved) - shown
+    if remaining > 0:
+        lines.append(f"...ほか {remaining} 件")
+
+    message = (
+        f"{os.path.basename(pmm_path)}\n\n"
+        f"見つからなかった／絞り込めなかったファイルが {len(unresolved)} 件あります:\n\n"
+        + "\n".join(lines)
+        + f"\n\n詳細レポート:\n{report_path}"
+    )
+    ctypes.windll.user32.MessageBoxW(0, message, "pmm_fixer - 未解決のファイルがあります", MB_OK | MB_ICONWARNING | MB_TOPMOST)
+
+
+def do_scan(pmm_path, roots, report_path, rebuild_index, index_bundle=None, popup=True, popup_all_clear=True):
     print(f"PMM解析中: {pmm_path}")
     refs = extract_pmm_refs(pmm_path)
     print(f"参照ファイル {len(refs)} 件を検出")
@@ -86,6 +130,10 @@ def do_scan(pmm_path, roots, report_path, rebuild_index, index_bundle=None):
         report_path = os.path.join(TOOL_DIR, f"{base}_リンク切れ一覧.xlsx")
     write_report_xlsx(pmm_path, results, built_at, used_roots, report_path)
     print(f"レポート出力: {report_path}")
+
+    if popup:
+        notify_missing(pmm_path, results, report_path, show_all_clear=popup_all_clear)
+
     return results, report_path
 
 
@@ -102,7 +150,8 @@ def do_load(pmm_path, roots, report_path, rebuild_index, mmd_exe):
             return
         print(f"検出: {mmd_exe}")
 
-    results, report_path = do_scan(pmm_path, roots, report_path, rebuild_index, index_bundle=index_bundle)
+    results, report_path = do_scan(pmm_path, roots, report_path, rebuild_index, index_bundle=index_bundle,
+                                    popup_all_clear=False)
 
     resolved_by_name = {}
     for r in results:
