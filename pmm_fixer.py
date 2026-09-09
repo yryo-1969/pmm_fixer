@@ -79,9 +79,20 @@ def detect_mmd_exe(index, roots):
     return None
 
 
+def _print_index_progress(current_root, dirs_seen, files_seen):
+    if current_root is None:
+        print(f"\r  完了（フォルダ{dirs_seen:,}件・ファイル{files_seen:,}件を確認）" + " " * 10)
+    else:
+        print(f"\r  処理中: {current_root} - フォルダ{dirs_seen:,}件・ファイル{files_seen:,}件を確認...",
+              end="", flush=True)
+
+
 def get_index(roots, rebuild_index):
     print(f"ファイルインデックス構築中 (対象: {roots}) ...")
-    index, built_at, used_roots = build_file_index(roots, TOOL_DIR, force_rebuild=rebuild_index)
+    print("  （初回・ドライブ整理後は数分かかる場合があります。フリーズではありません）")
+    index, built_at, used_roots = build_file_index(
+        roots, TOOL_DIR, force_rebuild=rebuild_index, on_progress=_print_index_progress
+    )
     print(f"インデックス作成日時: {built_at}（{sum(len(v) for v in index.values())} ファイル）")
     return index, built_at, used_roots
 
@@ -170,6 +181,14 @@ def do_load(pmm_path, roots, report_path, rebuild_index, mmd_exe):
         mmd_exe = detect_mmd_exe(index_bundle[0], roots)
         if mmd_exe is None:
             print("MikuMikuDance.exe が見つかりませんでした。--mmd-exe で明示的にパスを指定してください。")
+            ctypes.windll.user32.MessageBoxW(
+                0,
+                "MikuMikuDance.exe が見つかりませんでした。\n\n"
+                "MMDがインストールされているドライブが、検索対象として選ばれていない可能性があります。\n"
+                "もう一度実行し、ドライブ選択画面でMMDのあるドライブにチェックを入れてください。",
+                "pmm_fixer - MikuMikuDanceが見つかりません",
+                MB_OK | MB_ICONWARNING | MB_TOPMOST,
+            )
             return
         print(f"検出: {mmd_exe}")
 

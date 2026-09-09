@@ -60,7 +60,10 @@ def extract_pmm_refs(pmm_path):
     return sorted(found)
 
 
-def build_file_index(roots, cache_dir, force_rebuild=False):
+def build_file_index(roots, cache_dir, force_rebuild=False, on_progress=None):
+    """on_progress(root, dirs_seen, files_seen), called periodically (not per
+    file) while walking, so a slow/large drive doesn't look like it's frozen.
+    """
     cache_path = os.path.join(cache_dir, INDEX_CACHE_NAME)
     if not force_rebuild and os.path.exists(cache_path):
         with open(cache_path, "r", encoding="utf-8") as f:
@@ -70,14 +73,24 @@ def build_file_index(roots, cache_dir, force_rebuild=False):
 
     index = {}
     t0 = time.time()
+    dirs_seen = 0
+    files_seen = 0
+    last_report = t0
     for root in roots:
         if not os.path.isdir(root):
             continue
         for dirpath, _dirnames, filenames in os.walk(root):
+            dirs_seen += 1
             for name in filenames:
+                files_seen += 1
                 key = name.lower()
                 full = os.path.join(dirpath, name)
                 index.setdefault(key, []).append(full)
+            if on_progress and time.time() - last_report >= 1.0:
+                on_progress(root, dirs_seen, files_seen)
+                last_report = time.time()
+    if on_progress:
+        on_progress(None, dirs_seen, files_seen)
     built_at = time.strftime("%Y-%m-%d %H:%M:%S")
     with open(cache_path, "w", encoding="utf-8") as f:
         json.dump({"index": index, "built_at": built_at, "roots": roots,
