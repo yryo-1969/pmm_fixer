@@ -46,27 +46,32 @@ def detect_fixed_drives():
     return drives or ["C:\\"]
 
 
-def detect_mmd_exe(roots):
-    """Best-effort search for MikuMikuDance.exe under the given roots (shallow-ish)."""
+def detect_mmd_exe(index, roots):
+    """Look up MikuMikuDance.exe in an already-built file index (covers every
+    subfolder under `roots`, however deep — not just a shallow search)."""
+    for candidate in index.get("mikumikudance.exe", []):
+        return candidate
+    # index not built yet / doesn't have it: fall back to an unrestricted walk
     for root in roots:
-        for dirpath, dirnames, filenames in os.walk(root):
-            depth = dirpath[len(root):].count(os.sep)
-            if depth > 3:
-                dirnames[:] = []
-                continue
+        for dirpath, _dirnames, filenames in os.walk(root):
             if "MikuMikuDance.exe" in filenames:
                 return os.path.join(dirpath, "MikuMikuDance.exe")
     return None
 
 
-def do_scan(pmm_path, roots, report_path, rebuild_index):
+def get_index(roots, rebuild_index):
+    print(f"ファイルインデックス構築中 (対象: {roots}) ...")
+    index, built_at, used_roots = build_file_index(roots, TOOL_DIR, force_rebuild=rebuild_index)
+    print(f"インデックス作成日時: {built_at}（{sum(len(v) for v in index.values())} ファイル）")
+    return index, built_at, used_roots
+
+
+def do_scan(pmm_path, roots, report_path, rebuild_index, index_bundle=None):
     print(f"PMM解析中: {pmm_path}")
     refs = extract_pmm_refs(pmm_path)
     print(f"参照ファイル {len(refs)} 件を検出")
 
-    print(f"ファイルインデックス構築中 (対象: {roots}) ...")
-    index, built_at, used_roots = build_file_index(roots, TOOL_DIR, force_rebuild=rebuild_index)
-    print(f"インデックス作成日時: {built_at}（{sum(len(v) for v in index.values())} ファイル）")
+    index, built_at, used_roots = index_bundle or get_index(roots, rebuild_index)
 
     results = resolve_refs(refs, index)
 
@@ -87,15 +92,17 @@ def do_scan(pmm_path, roots, report_path, rebuild_index):
 def do_load(pmm_path, roots, report_path, rebuild_index, mmd_exe):
     import mmd_dialogs
 
+    index_bundle = get_index(roots, rebuild_index)
+
     if mmd_exe is None:
         print("MikuMikuDance.exe を自動検索中 ...")
-        mmd_exe = detect_mmd_exe(roots)
+        mmd_exe = detect_mmd_exe(index_bundle[0], roots)
         if mmd_exe is None:
             print("MikuMikuDance.exe が見つかりませんでした。--mmd-exe で明示的にパスを指定してください。")
             return
         print(f"検出: {mmd_exe}")
 
-    results, report_path = do_scan(pmm_path, roots, report_path, rebuild_index)
+    results, report_path = do_scan(pmm_path, roots, report_path, rebuild_index, index_bundle=index_bundle)
 
     resolved_by_name = {}
     for r in results:
