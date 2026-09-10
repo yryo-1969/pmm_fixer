@@ -4,7 +4,7 @@ import os
 import re
 import time
 
-REF_EXTS = [b".pmx", b".pmd", b".x", b".vmd", b".vpd", b".wav", b".avi"]
+REF_EXTS = [b".pmx", b".pmd", b".x", b".vmd", b".vpd", b".wav", b".avi", b".fx", b".fxsub"]
 _DRIVE_RE = re.compile(r"[A-Za-z]:\\")
 KIND_BY_EXT = {
     ".pmx": "モデル(.pmx)",
@@ -14,6 +14,8 @@ KIND_BY_EXT = {
     ".vpd": "ポーズ(.vpd)",
     ".wav": "音声(.wav)",
     ".avi": "背景動画(.avi)",
+    ".fx": "エフェクト(.fx)",
+    ".fxsub": "エフェクト(.fxsub)",
 }
 INDEX_CACHE_NAME = "file_index_cache.json"
 
@@ -144,49 +146,111 @@ def _pick_by_date(candidates, pmm_mtime):
     return min(dated, key=lambda d: d[0])[1]
 
 
+def _resolve_path(ref, index, pmm_mtime=None):
+    """Core resolution logic shared by resolve_refs (pmm-embedded refs) and
+    resolve_emm_refs (MMEffect assignment paths): does this path exist as
+    given, and if not, what does the file index suggest instead? Returns
+    a dict with exists/resolved_path/status/candidates — everything an
+    entry needs except caller-specific identity fields (name/kind for a
+    pmm ref, section/key for an emm entry)."""
+    basename = os.path.basename(ref)
+    exists = os.path.exists(ref)
+    entry = {
+        "exists": exists,
+        "resolved_path": ref if exists else None,
+        "status": "OK（元のパスに存在）" if exists else None,
+        "candidates": [],
+    }
+    if not exists:
+        candidates = index.get(basename.lower(), [])
+        candidates = [c for c in candidates if c.lower() != ref.lower()]
+        entry["candidates"] = candidates
+        if len(candidates) == 1:
+            entry["resolved_path"] = candidates[0]
+            entry["status"] = "対応済み（自動検出・候補1件）"
+        elif len(candidates) > 1:
+            best_score = max(_path_similarity(ref, c) for c in candidates)
+            tied = [c for c in candidates if _path_similarity(ref, c) == best_score]
+            if best_score > 0 and len(tied) == 1:
+                entry["resolved_path"] = tied[0]
+                entry["status"] = f"対応済み（自動検出・候補{len(candidates)}件から最有力を選択）"
+            elif best_score > 0 and len(tied) > 1:
+                picked = _pick_by_date(tied, pmm_mtime)
+                if picked:
+                    entry["resolved_path"] = picked
+                    entry["status"] = (
+                        f"対応済み（候補{len(candidates)}件中{len(tied)}件が同点、"
+                        "PMMの日付に近いものを選択）"
+                    )
+                else:
+                    entry["status"] = f"要確認（候補{len(candidates)}件、絞り込めず）"
+            else:
+                entry["status"] = f"要確認（候補{len(candidates)}件、絞り込めず）"
+        else:
+            entry["status"] = "未対応（候補見つからず）"
+    return entry
+
+
 def resolve_refs(refs, index, pmm_mtime=None):
     results = []
     for ref in refs:
         basename = os.path.basename(ref)
         ext = os.path.splitext(basename)[1].lower()
         kind = KIND_BY_EXT.get(ext, ext)
-        exists = os.path.exists(ref)
+        resolved = _resolve_path(ref, index, pmm_mtime)
         entry = {
             "name": os.path.splitext(basename)[0],
             "kind": kind,
             "old_path": ref,
-            "exists": exists,
-            "resolved_path": ref if exists else None,
-            "status": "OK（元のパスに存在）" if exists else None,
-            "candidates": [],
         }
-        if not exists:
-            candidates = index.get(basename.lower(), [])
-            candidates = [c for c in candidates if c.lower() != ref.lower()]
-            entry["candidates"] = candidates
-            if len(candidates) == 1:
-                entry["resolved_path"] = candidates[0]
-                entry["status"] = "対応済み（自動検出・候補1件）"
-            elif len(candidates) > 1:
-                best_score = max(_path_similarity(ref, c) for c in candidates)
-                tied = [c for c in candidates if _path_similarity(ref, c) == best_score]
-                if best_score > 0 and len(tied) == 1:
-                    entry["resolved_path"] = tied[0]
-                    entry["status"] = f"対応済み（自動検出・候補{len(candidates)}件から最有力を選択）"
-                elif best_score > 0 and len(tied) > 1:
-                    picked = _pick_by_date(tied, pmm_mtime)
-                    if picked:
-                        entry["resolved_path"] = picked
-                        entry["status"] = (
-                            f"対応済み（候補{len(candidates)}件中{len(tied)}件が同点、"
-                            "PMMの日付に近いものを選択）"
-                        )
-                    else:
-                        entry["status"] = f"要確認（候補{len(candidates)}件、絞り込めず）"
-                else:
-                    entry["status"] = f"要確認（候補{len(candidates)}件、絞り込めず）"
-            else:
-                entry["status"] = "未対応（候補見つからず）"
+        entry.update(resolved)
+        results.append(entry)
+    return results
+
+
+def parse_emm(emm_path):
+    """Parse a .emm MMEffect assignment file (plain 'Key = Value' lines
+    under '[Section]' headers, as written by MMEffect's own File > 設定を
+    保存 command) into a flat list of (section, key, value) tuples. Same
+    cp932 encoding as pmm-embedded strings. Values that aren't paths
+    ('none', 'true'/'false', an object id like 'Acs1' for Owner=) are
+    returned as-is — filtering to path-like values is the caller's job.
+    """
+    with open(emm_path, "rb") as f:
+        data = f.read()
+    text = data.decode("cp932", errors="replace")
+    section = None
+    entries = []
+    for line in text.splitlines():
+        line = line.strip()
+        if not line or line.startswith(";"):
+            continue
+        if line.startswith("[") and line.endswith("]"):
+            section = line[1:-1]
+            continue
+        if section is None or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        entries.append((section, key.strip(), value.strip()))
+    return entries
+
+
+def resolve_emm_refs(emm_path, index, pmm_mtime=None):
+    """Check every .fx/.fxsub path an MMEffect assignment export actually
+    references, and try to resolve any that are missing — same approach
+    as resolve_refs, via the shared _resolve_path. [Object] entries are
+    skipped: those are the accessory/model files MME's assignment dialog
+    is driving, which pmm_fixer's own pmm scan already covers; this is
+    specifically for the effect files themselves, which (per investigation
+    on real projects) are often not stored as plain paths in the pmm at
+    all, so they need to come from MME's own exported state instead."""
+    results = []
+    for section, key, value in parse_emm(emm_path):
+        if not value.lower().endswith((".fx", ".fxsub")):
+            continue
+        resolved = _resolve_path(value, index, pmm_mtime)
+        entry = {"section": section, "key": key, "old_path": value}
+        entry.update(resolved)
         results.append(entry)
     return results
 
@@ -275,3 +339,129 @@ def write_report_xlsx(pmm_path, results, index_built_at, roots, out_path):
 
     wb.save(out_path)
     return out_path
+
+
+def write_effect_report_xlsx(pmm_path, results, out_path):
+    """Same look as write_report_xlsx, but for resolve_emm_refs results
+    (section/key/old_path instead of name/kind/old_path — MMEffect
+    assignments don't have a single meaningful 'name' the way a pmm ref
+    does, so the sheet is keyed by which assignment slot it came from)."""
+    import openpyxl
+    from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "MMEffect状態"
+
+    FONT_NAME = "Arial"
+    header_font = Font(name=FONT_NAME, bold=True, color="FFFFFF", size=11)
+    header_fill = PatternFill(start_color="4472C4", end_color="4472C4", fill_type="solid")
+    title_font = Font(name=FONT_NAME, bold=True, size=14)
+    sub_font = Font(name=FONT_NAME, italic=True, size=10, color="666666")
+    normal_font = Font(name=FONT_NAME, size=10)
+    ok_fill = PatternFill(start_color="C6EFCE", end_color="C6EFCE", fill_type="solid")
+    ok_font = Font(name=FONT_NAME, size=10, color="006100")
+    warn_fill = PatternFill(start_color="FFEB9C", end_color="FFEB9C", fill_type="solid")
+    warn_font = Font(name=FONT_NAME, size=10, color="9C6500")
+    ng_fill = PatternFill(start_color="FFC7CE", end_color="FFC7CE", fill_type="solid")
+    ng_font = Font(name=FONT_NAME, size=10, color="9C0006")
+    thin = Side(style="thin", color="BFBFBF")
+    border = Border(left=thin, right=thin, top=thin, bottom=thin)
+
+    ws.merge_cells("A1:E1")
+    ws["A1"] = f"{os.path.basename(pmm_path)}  MMEffect割り当て状態"
+    ws["A1"].font = title_font
+
+    ws.merge_cells("A2:E2")
+    ws["A2"] = (
+        "MMEffectの「エフェクト割り当て」ダイアログから読み取った、実際に使われている.fx/.fxsubファイルの一覧です。"
+        "自動での差し替えは行っていません（候補が複数ある場合に誤ったものを割り当てるリスクがあるため）。"
+    )
+    ws["A2"].font = sub_font
+    ws["A2"].alignment = Alignment(wrap_text=True)
+
+    headers = ["セクション", "キー", "エフェクトファイルのパス", "解決パス／候補", "状態"]
+    header_row = 4
+    for col, h in enumerate(headers, start=1):
+        c = ws.cell(row=header_row, column=col, value=h)
+        c.font = header_font
+        c.fill = header_fill
+        c.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+        c.border = border
+
+    r_idx = header_row + 1
+    for entry in results:
+        if entry["resolved_path"]:
+            resolved_display = entry["resolved_path"]
+        elif entry["candidates"]:
+            resolved_display = "\n".join(entry["candidates"][:5])
+        else:
+            resolved_display = "(候補なし)"
+
+        row = [entry["section"], entry["key"], entry["old_path"], resolved_display, entry["status"]]
+        for c_idx, val in enumerate(row, start=1):
+            c = ws.cell(row=r_idx, column=c_idx, value=val)
+            c.font = normal_font
+            c.border = border
+            c.alignment = Alignment(vertical="top", wrap_text=True)
+            if c_idx == 5:
+                if entry["exists"] or entry["resolved_path"]:
+                    c.font, c.fill = ok_font, ok_fill
+                elif entry["candidates"]:
+                    c.font, c.fill = warn_font, warn_fill
+                else:
+                    c.font, c.fill = ng_font, ng_fill
+                c.alignment = Alignment(horizontal="center", vertical="center")
+        ws.row_dimensions[r_idx].height = 34
+        r_idx += 1
+
+    widths = {"A": 24, "B": 16, "C": 46, "D": 46, "E": 30}
+    for col, w in widths.items():
+        ws.column_dimensions[col].width = w
+    ws.row_dimensions[header_row].height = 24
+    ws.freeze_panes = "A5"
+
+    wb.save(out_path)
+    return out_path
+
+
+def _write_plain_listing(title, headers, rows, out_path):
+    """Tab-separated plain text, openable in Notepad on any Windows PC with
+    zero dependencies — a fallback for anyone without Excel (or another
+    .xlsx-capable app like LibreOffice) installed. UTF-8 with a BOM so
+    older Notepad builds detect the encoding correctly instead of
+    misreading it as the system ANSI codepage."""
+    lines = [title, "=" * len(title), "", "\t".join(headers)]
+    for row in rows:
+        lines.append("\t".join("" if v is None else str(v) for v in row))
+    with open(out_path, "w", encoding="utf-8-sig") as f:
+        f.write("\n".join(lines) + "\n")
+    return out_path
+
+
+def _resolved_display(entry):
+    if entry["resolved_path"]:
+        return entry["resolved_path"]
+    if entry["candidates"]:
+        return " / ".join(entry["candidates"][:5])
+    return "(候補なし)"
+
+
+def write_plain_listing_for_refs(pmm_path, results, out_path):
+    """Plain-text companion to write_report_xlsx (same resolve_refs results)."""
+    headers = ["名称", "種類", "旧パス（PMM記載）", "解決パス／候補", "状態"]
+    rows = [
+        [entry["name"], entry["kind"], entry["old_path"], _resolved_display(entry), entry["status"]]
+        for entry in results
+    ]
+    return _write_plain_listing(f"{os.path.basename(pmm_path)}  リンク切れ一覧", headers, rows, out_path)
+
+
+def write_plain_listing_for_emm(pmm_path, results, out_path):
+    """Plain-text companion to write_effect_report_xlsx (same resolve_emm_refs results)."""
+    headers = ["セクション", "キー", "エフェクトファイルのパス", "解決パス／候補", "状態"]
+    rows = [
+        [entry["section"], entry["key"], entry["old_path"], _resolved_display(entry), entry["status"]]
+        for entry in results
+    ]
+    return _write_plain_listing(f"{os.path.basename(pmm_path)}  MMEffect割り当て状態", headers, rows, out_path)
